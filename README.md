@@ -5,6 +5,7 @@
 art by: [@Resetovo](https://x.com/Resetovo/status/1946531307456249995?s=20)
 
 ---
+**Modified to work with [Zukami](https://github.com/bwnz1x/zukami)**
 
 Scraper and rating calculation API for SEGA arcade rhythm games (maimai, CHUNITHM, O.N.G.E.K.I). Standalone Bun backend built with **Elysia + Zod + Cheerio**.
 
