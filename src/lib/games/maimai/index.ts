@@ -1,9 +1,12 @@
 import { AuthError, FetchError } from '@/lib/errors';
 import { getFcImageUrl, getFsImageUrl, getJacketUrl } from '@/lib/games/maimai/assets';
-import { refreshSession } from '@/lib/games/maimai/auth';
-import { MAIMAI_URLS, type MaimaiServer } from '@/lib/games/maimai/consts';
-import { parseCookies } from '@/lib/games/maimai/cookies';
+import {
+  MAIMAI_TWO_VERSION_NEW_THRESHOLD,
+  MAIMAI_URLS,
+  type MaimaiServer,
+} from '@/lib/games/maimai/consts';
 import { maimaiFetch } from '@/lib/games/maimai/http';
+import { parsePlaylogDetail, parseRecentPlays } from '@/lib/games/maimai/parser/playlog';
 import {
   parseActiveCollection,
   parseCircle,
@@ -15,64 +18,63 @@ import {
   computeRatingSongs,
   type RatedScore,
 } from '@/lib/games/maimai/rating/calculator';
-import type { MaimaiProfileExtended, MaimaiRating } from '@/lib/games/maimai/schemas';
+import type {
+  MaimaiPlayDetail,
+  MaimaiProfileExtended,
+  MaimaiRating,
+  MaimaiRecentPlay,
+} from '@/lib/games/maimai/schemas';
+import { maimaiSessionManager } from '@/lib/games/maimai/session';
 import { fetchOtogeDbSongs, findChart, type OtogeDbChart } from '@/lib/games/maimai/songs/otoge-db';
 
 export async function getMaimaiProfile(
   server: MaimaiServer,
   cookie: string
 ): Promise<MaimaiProfileExtended> {
-  let sessionCookie = cookie;
-  const parsed = parseCookies(cookie);
-  if (!parsed.has('_t') && parsed.has('clal')) {
-    sessionCookie = await refreshSession(cookie);
-  }
-
+  const sessionCookie = await maimaiSessionManager.resolveSessionCookie(cookie);
   const baseUrl = MAIMAI_URLS[server];
 
-  const [profileRes, nameplateRes, frameRes, circleRes] = await Promise.all([
-    maimaiFetch(`${baseUrl}/playerData/`, sessionCookie),
-    maimaiFetch(`${baseUrl}/collection/nameplate/`, sessionCookie),
-    maimaiFetch(`${baseUrl}/collection/frame/`, sessionCookie),
-    maimaiFetch(`${baseUrl}/circle/`, sessionCookie),
-  ]);
-
-  const isAuthError = [profileRes, nameplateRes, frameRes, circleRes].some(
-    (res) => res.status === 401 || res.status === 403
-  );
-
-  if (isAuthError) {
-    const statuses = [
-      profileRes.status,
-      nameplateRes.status,
-      frameRes.status,
-      circleRes.status,
-    ].join(', ');
-    throw new AuthError(`invalid or expired session cookie (HTTP ${statuses})`);
+  // Fetch sequentially (never Promise.all) to avoid SEGA maimai DX NET Error 200001
+  const profileRes = await maimaiFetch(`${baseUrl}/playerData/`, sessionCookie);
+  if (profileRes.status === 401 || profileRes.status === 403) {
+    maimaiSessionManager.invalidateSession(cookie);
+    throw new AuthError(`invalid or expired session cookie (HTTP ${profileRes.status})`);
   }
-
-  if (!profileRes.ok || !nameplateRes.ok || !frameRes.ok || !circleRes.ok) {
-    const failedStatus = !profileRes.ok
-      ? profileRes.status
-      : !nameplateRes.ok
-        ? nameplateRes.status
-        : !frameRes.ok
-          ? frameRes.status
-          : circleRes.status;
-    throw new FetchError(`maimai returned ${failedStatus}`, failedStatus);
+  if (!profileRes.ok) {
+    throw new FetchError(`maimai returned ${profileRes.status}`, profileRes.status);
   }
-
-  const [profileHtml, nameplateHtml, frameHtml, circleHtml] = await Promise.all([
-    profileRes.text(),
-    nameplateRes.text(),
-    frameRes.text(),
-    circleRes.text(),
-  ]);
-
+  const profileHtml = await profileRes.text();
   const parsedProfile = parseProfile(profileHtml, server);
-  const parsedNameplate = parseActiveCollection(nameplateHtml, server);
-  const parsedFrame = parseActiveCollection(frameHtml, server);
-  const parsedCircle = parseCircle(circleHtml, server);
+
+  // Cosmetic collection pages are fetched sequentially and degrade gracefully on transient errors
+  let parsedNameplate: string | null = null;
+  let parsedFrame: string | null = null;
+  let parsedCircle: MaimaiProfileExtended['circle'] = null;
+
+  const fetchOptionalHtml = async (url: string): Promise<string | null> => {
+    try {
+      const res = await maimaiFetch(url, sessionCookie);
+      if (res.status === 401 || res.status === 403) {
+        maimaiSessionManager.invalidateSession(cookie);
+        throw new AuthError(`invalid or expired session cookie (HTTP ${res.status})`);
+      }
+      if (!res.ok) return null;
+      return await res.text();
+    } catch (err) {
+      if (err instanceof AuthError) throw err;
+      console.warn(`[PROFILE_OPTIONAL_SKIP] ${url}:`, err instanceof Error ? err.message : err);
+      return null;
+    }
+  };
+
+  const nameplateHtml = await fetchOptionalHtml(`${baseUrl}/collection/nameplate/`);
+  if (nameplateHtml) parsedNameplate = parseActiveCollection(nameplateHtml, server);
+
+  const frameHtml = await fetchOptionalHtml(`${baseUrl}/collection/frame/`);
+  if (frameHtml) parsedFrame = parseActiveCollection(frameHtml, server);
+
+  const circleHtml = await fetchOptionalHtml(`${baseUrl}/circle/`);
+  if (circleHtml) parsedCircle = parseCircle(circleHtml, server);
 
   return {
     ...parsedProfile,
@@ -114,15 +116,20 @@ function toRatingSong(score: RatedScore): MaimaiRating['newRatingSongs'][number]
   };
 }
 
+function estimateLevelFromLabel(level: string): number {
+  const trimmed = level.trim();
+  const isPlus = trimmed.endsWith('+');
+  const base = Number.parseFloat(trimmed.replace('+', ''));
+  if (!Number.isFinite(base)) return 0;
+  return isPlus ? base + 0.6 : base;
+}
+
 export async function getMaimaiRating(
   _server: MaimaiServer,
-  cookie: string
+  cookie: string,
+  includeAll = false
 ): Promise<MaimaiRating> {
-  let sessionCookie = cookie;
-  const parsed = parseCookies(cookie);
-  if (!parsed.has('_t') && parsed.has('clal')) {
-    sessionCookie = await refreshSession(cookie);
-  }
+  const sessionCookie = await maimaiSessionManager.resolveSessionCookie(cookie);
 
   const [otogeDb, scores] = await Promise.all([
     fetchOtogeDbSongs(),
@@ -130,9 +137,19 @@ export async function getMaimaiRating(
   ]);
 
   const ratedScores: RatedScore[] = [];
+  const unmatchedScores: RatedScore[] = [];
   for (const score of scores) {
     const chart = findChart(otogeDb, score);
-    if (!chart) continue;
+    if (!chart) {
+      unmatchedScores.push({
+        ...score,
+        internalLevel: estimateLevelFromLabel(score.level),
+        addedVersion: 0,
+        rating: 0,
+        jacket: getJacketUrl(score.imageUrl),
+      });
+      continue;
+    }
     ratedScores.push(rateScore(score, chart, otogeDb.currentVersion));
   }
 
@@ -141,11 +158,87 @@ export async function getMaimaiRating(
     otogeDb.currentVersion
   );
 
+  if (!includeAll) {
+    return {
+      rating,
+      newRatingSongs: newRatingSongs.map(toRatingSong),
+      oldRatingSongs: oldRatingSongs.map(toRatingSong),
+    };
+  }
+
+  const versionThreshold =
+    otogeDb.currentVersion >= MAIMAI_TWO_VERSION_NEW_THRESHOLD
+      ? otogeDb.currentVersion - 1
+      : otogeDb.currentVersion;
+
+  const b50Set = new Set(
+    [...newRatingSongs, ...oldRatingSongs].map((s) => `${s.songName}@${s.type}@${s.difficulty}`)
+  );
+
+  const allScores = [...ratedScores, ...unmatchedScores]
+    .toSorted((a, b) =>
+      b.rating !== a.rating ? b.rating - a.rating : b.achievement - a.achievement
+    )
+    .map((score) => ({
+      ...toRatingSong(score),
+      bucket: (score.addedVersion >= versionThreshold ? 'new' : 'old') as 'new' | 'old',
+      isInBest50: b50Set.has(`${score.songName}@${score.type}@${score.difficulty}`),
+    }));
+
   return {
     rating,
     newRatingSongs: newRatingSongs.map(toRatingSong),
     oldRatingSongs: oldRatingSongs.map(toRatingSong),
+    allScores,
   };
+}
+
+export async function getMaimaiRecentPlays(
+  server: MaimaiServer,
+  cookie: string
+): Promise<MaimaiRecentPlay[]> {
+  const sessionCookie = await maimaiSessionManager.resolveSessionCookie(cookie);
+
+  const baseUrl = MAIMAI_URLS[server];
+  const res = await maimaiFetch(`${baseUrl}/record/`, sessionCookie);
+
+  if (res.status === 401 || res.status === 403) {
+    maimaiSessionManager.invalidateSession(cookie);
+    throw new AuthError(`invalid or expired session cookie (HTTP ${res.status})`);
+  }
+
+  if (!res.ok) {
+    throw new FetchError(`maimai returned ${res.status}`, res.status);
+  }
+
+  const html = await res.text();
+  return parseRecentPlays(html);
+}
+
+export async function getMaimaiPlayDetail(
+  server: MaimaiServer,
+  cookie: string,
+  idx: string
+): Promise<MaimaiPlayDetail> {
+  const sessionCookie = await maimaiSessionManager.resolveSessionCookie(cookie);
+
+  const baseUrl = MAIMAI_URLS[server];
+  const res = await maimaiFetch(
+    `${baseUrl}/record/playlogDetail/?idx=${encodeURIComponent(idx)}`,
+    sessionCookie
+  );
+
+  if (res.status === 401 || res.status === 403) {
+    maimaiSessionManager.invalidateSession(cookie);
+    throw new AuthError(`invalid or expired session cookie (HTTP ${res.status})`);
+  }
+
+  if (!res.ok) {
+    throw new FetchError(`maimai returned ${res.status}`, res.status);
+  }
+
+  const html = await res.text();
+  return parsePlaylogDetail(html, idx);
 }
 
 export * from '@/lib/games/maimai/assets';

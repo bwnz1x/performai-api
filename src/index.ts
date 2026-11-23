@@ -8,6 +8,10 @@ import { openapiPlugin } from '@/plugins/openapi';
 const port = Number(process.env.PORT) || 3000;
 
 export const app = new Elysia()
+  .onRequest(({ request }) => {
+    const url = new URL(request.url);
+    console.log(`[REQ] ${request.method} ${url.pathname}`);
+  })
   .use(errorHandler)
   .use(openapiPlugin)
   .use(maimaiModule)

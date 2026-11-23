@@ -1,8 +1,13 @@
 import { Elysia } from 'elysia';
 import { z } from 'zod';
 
-import { MaimaiProfileExtended, MaimaiRating } from '@/lib/games/maimai/schemas';
-import { cookieHeaders, loginBody, serverParams } from '@/modules/maimai/model';
+import {
+  MaimaiPlayDetail,
+  MaimaiProfileExtended,
+  MaimaiRating,
+  MaimaiRecentPlay,
+} from '@/lib/games/maimai/schemas';
+import { cookieHeaders, loginBody, playDetailParams, serverParams } from '@/modules/maimai/model';
 import { MaimaiService } from '@/modules/maimai/service';
 
 const ErrorResponse = z.object({
@@ -61,10 +66,18 @@ export const maimaiModule = new Elysia({
   )
   .get(
     '/rating',
-    ({ params, headers }) => MaimaiService.rating(params.server, headers['x-maimai-cookie']),
+    ({ params, headers, query }) =>
+      MaimaiService.rating(
+        params.server,
+        headers['x-maimai-cookie'],
+        query.includeAll === 'true' || query.includeAll === '1'
+      ),
     {
       params: serverParams,
       headers: cookieHeaders,
+      query: z.object({
+        includeAll: z.string().optional(),
+      }),
       response: {
         200: z.object({
           data: MaimaiRating,
@@ -76,7 +89,52 @@ export const maimaiModule = new Elysia({
       detail: {
         tags: ['Maimai'],
         summary: 'Get Player Rating',
-        description: 'Fetches the top 50 songs that make up the player rating.',
+        description:
+          'Fetches the top 50 songs that make up the player rating. Pass ?includeAll=true to also return all rated scores.',
+      },
+    }
+  )
+  .get(
+    '/recent',
+    ({ params, headers }) => MaimaiService.recent(params.server, headers['x-maimai-cookie']),
+    {
+      params: serverParams,
+      headers: cookieHeaders,
+      response: {
+        200: z.object({
+          data: z.array(MaimaiRecentPlay),
+        }),
+        422: ErrorResponse,
+        500: ErrorResponse,
+        501: ErrorResponse,
+      },
+      detail: {
+        tags: ['Maimai'],
+        summary: 'Get Recent Plays',
+        description: 'Fetches the 50 most recent play records from maimai DX NET.',
+      },
+    }
+  )
+  .get(
+    '/recent/:idx',
+    ({ params, headers }) =>
+      MaimaiService.recentDetail(params.server, headers['x-maimai-cookie'], params.idx),
+    {
+      params: playDetailParams,
+      headers: cookieHeaders,
+      response: {
+        200: z.object({
+          data: MaimaiPlayDetail,
+        }),
+        422: ErrorResponse,
+        500: ErrorResponse,
+        501: ErrorResponse,
+      },
+      detail: {
+        tags: ['Maimai'],
+        summary: 'Get Recent Play Judgement Breakdown',
+        description:
+          'Fetches full judgement breakdown (totals + tap/hold/slide/touch/break) for a recent play.',
       },
     }
   );

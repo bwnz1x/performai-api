@@ -29,3 +29,10 @@ export class ParseError extends GameError {
     this.name = 'ParseError';
   }
 }
+
+export class RateLimitError extends GameError {
+  constructor(message = 'upstream rate limited (SEGA error page)') {
+    super(message, 'RATE_LIMITED', 429);
+    this.name = 'RateLimitError';
+  }
+}

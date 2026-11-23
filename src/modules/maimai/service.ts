@@ -1,6 +1,11 @@
 import { status } from 'elysia';
 
-import { getMaimaiProfile, getMaimaiRating } from '@/lib/games/maimai';
+import {
+  getMaimaiPlayDetail,
+  getMaimaiProfile,
+  getMaimaiRating,
+  getMaimaiRecentPlays,
+} from '@/lib/games/maimai';
 import { loginMaimaiIntl } from '@/lib/games/maimai/auth';
 import type { MaimaiServer } from '@/lib/games/maimai/consts';
 
@@ -33,7 +38,7 @@ export const MaimaiService = {
     return { data: profile };
   },
 
-  async rating(server: string, cookie: string) {
+  async rating(server: string, cookie: string, includeAll = false) {
     if (server !== 'intl') {
       return status(501, {
         error: {
@@ -43,7 +48,35 @@ export const MaimaiService = {
       });
     }
 
-    const rating = await getMaimaiRating(server as MaimaiServer, cookie);
+    const rating = await getMaimaiRating(server as MaimaiServer, cookie, includeAll);
     return { data: rating };
+  },
+
+  async recent(server: string, cookie: string) {
+    if (server !== 'intl') {
+      return status(501, {
+        error: {
+          code: 'NOT_IMPLEMENTED',
+          message: `server '${server}' not yet supported for maimai`,
+        },
+      });
+    }
+
+    const plays = await getMaimaiRecentPlays(server as MaimaiServer, cookie);
+    return { data: plays };
+  },
+
+  async recentDetail(server: string, cookie: string, idx: string) {
+    if (server !== 'intl') {
+      return status(501, {
+        error: {
+          code: 'NOT_IMPLEMENTED',
+          message: `server '${server}' not yet supported for maimai`,
+        },
+      });
+    }
+
+    const detail = await getMaimaiPlayDetail(server as MaimaiServer, cookie, idx);
+    return { data: detail };
   },
 };

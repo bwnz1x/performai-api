@@ -63,10 +63,98 @@ export const MaimaiRatingSong = z.object({
 
 export type MaimaiRatingSong = z.infer<typeof MaimaiRatingSong>;
 
+export const MaimaiRatedChart = MaimaiRatingSong.extend({
+  bucket: z.enum(['new', 'old']),
+  isInBest50: z.boolean(),
+});
+
+export type MaimaiRatedChart = z.infer<typeof MaimaiRatedChart>;
+
 export const MaimaiRating = z.object({
   rating: z.number().int(),
   newRatingSongs: z.array(MaimaiRatingSong),
   oldRatingSongs: z.array(MaimaiRatingSong),
+  allScores: z.array(MaimaiRatedChart).optional(),
 });
 
 export type MaimaiRating = z.infer<typeof MaimaiRating>;
+
+export const JudgementCounts = z.object({
+  criticalPerfect: z.number().int().nonnegative(),
+  perfect: z.number().int().nonnegative(),
+  great: z.number().int().nonnegative(),
+  good: z.number().int().nonnegative(),
+  miss: z.number().int().nonnegative(),
+});
+
+export type JudgementCounts = z.infer<typeof JudgementCounts>;
+
+export const NoteJudgementBreakdown = z.object({
+  tap: JudgementCounts.nullable(),
+  hold: JudgementCounts.nullable(),
+  slide: JudgementCounts.nullable(),
+  touch: JudgementCounts.nullable(),
+  break: JudgementCounts.nullable(),
+});
+
+export type NoteJudgementBreakdown = z.infer<typeof NoteJudgementBreakdown>;
+
+export const MaimaiJudgements = z.object({
+  totals: JudgementCounts,
+  notes: NoteJudgementBreakdown,
+});
+
+export type MaimaiJudgements = z.infer<typeof MaimaiJudgements>;
+
+export const MaimaiRecentPlay = z.object({
+  idx: z.string(),
+  name: z.string(),
+  normalizedName: z.string(),
+  type: z.enum(['std', 'dx']),
+  difficulty: z.enum(['basic', 'advanced', 'expert', 'master', 'remaster']),
+  achievement: z.number(),
+  dxScore: z.number().int(),
+  maxDxScore: z.number().int().nullable(),
+  track: z.string().nullable(),
+  playedAt: z.string().nullable(),
+  isNewRecord: z.boolean(),
+  jacket: z.url().nullable(),
+  combo: z.object({
+    type: z.string().nullable(),
+    image: z.url().nullable(),
+  }),
+  sync: z.object({
+    type: z.string().nullable(),
+    image: z.url().nullable(),
+  }),
+});
+
+export type MaimaiRecentPlay = z.infer<typeof MaimaiRecentPlay>;
+
+export const MaimaiPlayDetail = z.object({
+  idx: z.string(),
+  name: z.string(),
+  normalizedName: z.string(),
+  type: z.enum(['std', 'dx']),
+  difficulty: z.enum(['basic', 'advanced', 'expert', 'master', 'remaster']),
+  achievement: z.number(),
+  dxScore: z.number().int().nullable(),
+  maxDxScore: z.number().int().nullable(),
+  playedAt: z.string().nullable(),
+  jacket: z.url().nullable(),
+  combo: z.object({
+    type: z.string().nullable(),
+    image: z.url().nullable(),
+  }),
+  sync: z.object({
+    type: z.string().nullable(),
+    image: z.url().nullable(),
+  }),
+  maxCombo: z.number().int().nullable(),
+  totalCombo: z.number().int().nullable(),
+  fast: z.number().int().nullable(),
+  late: z.number().int().nullable(),
+  judgements: MaimaiJudgements,
+});
+
+export type MaimaiPlayDetail = z.infer<typeof MaimaiPlayDetail>;

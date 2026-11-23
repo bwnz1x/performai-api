@@ -180,8 +180,11 @@ export async function fetchScoreData(
 }
 
 export async function fetchAllScoreData(cookie: string): Promise<ScoreData[]> {
-  const results = await Promise.all(
-    [0, 1, 2, 3, 4].map((difficulty) => fetchScoreData(cookie, difficulty))
-  );
-  return results.flat();
+  const all: ScoreData[] = [];
+  for (const difficulty of [0, 1, 2, 3, 4]) {
+    // oxlint-disable-next-line no-await-in-loop
+    const scores = await fetchScoreData(cookie, difficulty);
+    all.push(...scores);
+  }
+  return all;
 }
