@@ -310,7 +310,6 @@ export function parseCollectionPage(
 
     const isEquipped =
       card.hasClass('collection_setting_block_equipped') ||
-      card.find('img[src*="btn_set."], img[src*="equipped"], .equipped').length > 0 ||
       (equipped !== null &&
         ((imageUrl !== null && equipped.imageUrl === imageUrl) ||
           (category === 'trophy' && name.length > 0 && equipped.name === name)));
