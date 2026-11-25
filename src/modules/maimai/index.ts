@@ -2,12 +2,23 @@ import { Elysia } from 'elysia';
 import { z } from 'zod';
 
 import {
+  MaimaiCollectionResponse,
+  MaimaiEquipResult,
+  MaimaiPhoto,
   MaimaiPlayDetail,
   MaimaiProfileExtended,
   MaimaiRating,
   MaimaiRecentPlay,
 } from '@/lib/games/maimai/schemas';
-import { cookieHeaders, loginBody, playDetailParams, serverParams } from '@/modules/maimai/model';
+import {
+  collectionParams,
+  cookieHeaders,
+  equipCollectionBody,
+  loginBody,
+  photoImageQuery,
+  playDetailParams,
+  serverParams,
+} from '@/modules/maimai/model';
 import { MaimaiService } from '@/modules/maimai/service';
 
 const ErrorResponse = z.object({
@@ -135,6 +146,95 @@ export const maimaiModule = new Elysia({
         summary: 'Get Recent Play Judgement Breakdown',
         description:
           'Fetches full judgement breakdown (totals + tap/hold/slide/touch/break) for a recent play.',
+      },
+    }
+  )
+  .get(
+    '/photos',
+    ({ params, headers }) => MaimaiService.photos(params.server, headers['x-maimai-cookie']),
+    {
+      params: serverParams,
+      headers: cookieHeaders,
+      response: {
+        200: z.object({
+          data: z.array(MaimaiPhoto),
+        }),
+        422: ErrorResponse,
+        500: ErrorResponse,
+        501: ErrorResponse,
+      },
+      detail: {
+        tags: ['Maimai'],
+        summary: 'Get Photo Album',
+        description: 'Fetches saved cabinet photos from maimai DX NET photoAlbum.',
+      },
+    }
+  )
+  .get(
+    '/photos/image',
+    ({ params, headers, query }) =>
+      MaimaiService.photoImage(params.server, headers['x-maimai-cookie'], query.url),
+    {
+      params: serverParams,
+      headers: cookieHeaders,
+      query: photoImageQuery,
+      detail: {
+        tags: ['Maimai'],
+        summary: 'Proxy Photo Album Image',
+        description:
+          'Streams an authenticated maimai DX NET photo image using the player session cookie.',
+      },
+    }
+  )
+  .get(
+    '/collection/:category',
+    ({ params, headers }) =>
+      MaimaiService.collection(params.server, headers['x-maimai-cookie'], params.category),
+    {
+      params: collectionParams,
+      headers: cookieHeaders,
+      response: {
+        200: z.object({
+          data: MaimaiCollectionResponse,
+        }),
+        422: ErrorResponse,
+        500: ErrorResponse,
+        501: ErrorResponse,
+      },
+      detail: {
+        tags: ['Maimai'],
+        summary: 'Get Cosmetic Collection',
+        description:
+          'Fetches unlocked icons, nameplates, frames, trophies (titles), or partners and the active equipped item.',
+      },
+    }
+  )
+  .post(
+    '/collection/:category/equip',
+    ({ params, headers, body }) =>
+      MaimaiService.equipCollection(
+        params.server,
+        headers['x-maimai-cookie'],
+        params.category,
+        body.idx
+      ),
+    {
+      params: collectionParams,
+      headers: cookieHeaders,
+      body: equipCollectionBody,
+      response: {
+        200: z.object({
+          data: MaimaiEquipResult,
+        }),
+        422: ErrorResponse,
+        500: ErrorResponse,
+        501: ErrorResponse,
+      },
+      detail: {
+        tags: ['Maimai'],
+        summary: 'Equip Cosmetic Item',
+        description:
+          'Equips a cosmetic item by idx on maimai DX NET by extracting the page CSRF token and submitting the change form.',
       },
     }
   );

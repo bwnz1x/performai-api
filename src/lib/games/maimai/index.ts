@@ -6,6 +6,12 @@ import {
   type MaimaiServer,
 } from '@/lib/games/maimai/consts';
 import { maimaiFetch } from '@/lib/games/maimai/http';
+import {
+  COLLECTION_PATHS,
+  extractEquipForm,
+  parseCollectionPage,
+} from '@/lib/games/maimai/parser/collection';
+import { parsePhotoAlbum } from '@/lib/games/maimai/parser/photos';
 import { parsePlaylogDetail, parseRecentPlays } from '@/lib/games/maimai/parser/playlog';
 import {
   parseActiveCollection,
@@ -19,6 +25,10 @@ import {
   type RatedScore,
 } from '@/lib/games/maimai/rating/calculator';
 import type {
+  MaimaiCollectionCategory,
+  MaimaiCollectionResponse,
+  MaimaiEquipResult,
+  MaimaiPhoto,
   MaimaiPlayDetail,
   MaimaiProfileExtended,
   MaimaiRating,
@@ -239,6 +249,136 @@ export async function getMaimaiPlayDetail(
 
   const html = await res.text();
   return parsePlaylogDetail(html, idx);
+}
+
+export async function getMaimaiPhotos(
+  server: MaimaiServer,
+  cookie: string
+): Promise<MaimaiPhoto[]> {
+  const sessionCookie = await maimaiSessionManager.resolveSessionCookie(cookie);
+  const baseUrl = MAIMAI_URLS[server];
+  const res = await maimaiFetch(`${baseUrl}/photo/`, sessionCookie);
+
+  if (res.status === 401 || res.status === 403) {
+    maimaiSessionManager.invalidateSession(cookie);
+    throw new AuthError(`invalid or expired session cookie (HTTP ${res.status})`);
+  }
+  if (!res.ok) {
+    throw new FetchError(`maimai returned ${res.status}`, res.status);
+  }
+
+  const html = await res.text();
+  return parsePhotoAlbum(html, server);
+}
+
+export async function fetchMaimaiPhotoImage(
+  server: MaimaiServer,
+  cookie: string,
+  imageUrl: string
+): Promise<{ bytes: ArrayBuffer; contentType: string }> {
+  const allowedOrigin = new URL(MAIMAI_URLS[server]).origin;
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(imageUrl);
+  } catch {
+    throw new FetchError('invalid photo image URL', 400);
+  }
+  if (parsedUrl.origin !== allowedOrigin) {
+    throw new FetchError(`photo image URL must belong to ${allowedOrigin}`, 400);
+  }
+
+  const sessionCookie = await maimaiSessionManager.resolveSessionCookie(cookie);
+  const res = await maimaiFetch(parsedUrl.toString(), sessionCookie, {
+    headers: {
+      Accept: 'image/*,*/*;q=0.8',
+    },
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    maimaiSessionManager.invalidateSession(cookie);
+    throw new AuthError(`invalid or expired session cookie (HTTP ${res.status})`);
+  }
+  if (!res.ok) {
+    throw new FetchError(`maimai returned ${res.status} while fetching photo`, res.status);
+  }
+
+  const contentType = res.headers.get('content-type') ?? 'image/jpeg';
+  const bytes = await res.arrayBuffer();
+  return { bytes, contentType };
+}
+
+export async function getMaimaiCollection(
+  server: MaimaiServer,
+  cookie: string,
+  category: MaimaiCollectionCategory
+): Promise<MaimaiCollectionResponse> {
+  const sessionCookie = await maimaiSessionManager.resolveSessionCookie(cookie);
+  const baseUrl = MAIMAI_URLS[server];
+  const pageUrl = `${baseUrl}${COLLECTION_PATHS[category]}`;
+  const res = await maimaiFetch(pageUrl, sessionCookie);
+
+  if (res.status === 401 || res.status === 403) {
+    maimaiSessionManager.invalidateSession(cookie);
+    throw new AuthError(`invalid or expired session cookie (HTTP ${res.status})`);
+  }
+  if (!res.ok) {
+    throw new FetchError(`maimai returned ${res.status}`, res.status);
+  }
+
+  const html = await res.text();
+  return parseCollectionPage(html, category, server);
+}
+
+export async function equipMaimaiCollection(
+  server: MaimaiServer,
+  cookie: string,
+  category: MaimaiCollectionCategory,
+  idx: string
+): Promise<MaimaiEquipResult> {
+  const sessionCookie = await maimaiSessionManager.resolveSessionCookie(cookie);
+  const baseUrl = MAIMAI_URLS[server];
+  const pageUrl = `${baseUrl}${COLLECTION_PATHS[category]}`;
+
+  const getRes = await maimaiFetch(pageUrl, sessionCookie);
+  if (getRes.status === 401 || getRes.status === 403) {
+    maimaiSessionManager.invalidateSession(cookie);
+    throw new AuthError(`invalid or expired session cookie (HTTP ${getRes.status})`);
+  }
+  if (!getRes.ok) {
+    throw new FetchError(`maimai returned ${getRes.status}`, getRes.status);
+  }
+
+  const pageHtml = await getRes.text();
+  const { actionUrl, body } = extractEquipForm(pageHtml, idx, pageUrl);
+
+  const postRes = await maimaiFetch(actionUrl, sessionCookie, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Referer: pageUrl,
+    },
+    body: body.toString(),
+  });
+
+  if (postRes.status === 401 || postRes.status === 403) {
+    maimaiSessionManager.invalidateSession(cookie);
+    throw new AuthError(`invalid or expired session cookie (HTTP ${postRes.status})`);
+  }
+  if (!postRes.ok) {
+    throw new FetchError(
+      `maimai returned ${postRes.status} while equipping cosmetic`,
+      postRes.status
+    );
+  }
+
+  const resultHtml = await postRes.text();
+  const parsedAfter = parseCollectionPage(resultHtml, category, server);
+
+  return {
+    category,
+    idx,
+    equipped: parsedAfter.equipped,
+  };
 }
 
 export * from '@/lib/games/maimai/assets';

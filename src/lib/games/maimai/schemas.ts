@@ -158,3 +158,48 @@ export const MaimaiPlayDetail = z.object({
 });
 
 export type MaimaiPlayDetail = z.infer<typeof MaimaiPlayDetail>;
+
+export const MaimaiPhoto = z.object({
+  id: z.string(),
+  songName: z.string(),
+  difficulty: z.enum(['basic', 'advanced', 'expert', 'master', 'remaster']).nullable(),
+  playedAt: z.string().nullable(),
+  imageUrl: z.url(),
+  suggestedFileName: z.string(),
+});
+
+export type MaimaiPhoto = z.infer<typeof MaimaiPhoto>;
+
+export const MaimaiCollectionCategory = z.enum(['icon', 'nameplate', 'frame', 'trophy', 'partner']);
+
+export type MaimaiCollectionCategory = z.infer<typeof MaimaiCollectionCategory>;
+
+export const MaimaiCollectionItem = z.object({
+  idx: z.string(),
+  category: MaimaiCollectionCategory,
+  name: z.string(),
+  description: z.string().nullable(),
+  imageUrl: z.url().nullable(),
+  trophyType: z.enum(['rainbow', 'gold', 'silver', 'bronze', 'normal']).nullable(),
+  group: z.string().nullable(),
+  isEquipped: z.boolean(),
+  canEquip: z.boolean(),
+});
+
+export type MaimaiCollectionItem = z.infer<typeof MaimaiCollectionItem>;
+
+export const MaimaiCollectionResponse = z.object({
+  category: MaimaiCollectionCategory,
+  equipped: MaimaiCollectionItem.nullable(),
+  items: z.array(MaimaiCollectionItem),
+});
+
+export type MaimaiCollectionResponse = z.infer<typeof MaimaiCollectionResponse>;
+
+export const MaimaiEquipResult = z.object({
+  category: MaimaiCollectionCategory,
+  idx: z.string(),
+  equipped: MaimaiCollectionItem.nullable(),
+});
+
+export type MaimaiEquipResult = z.infer<typeof MaimaiEquipResult>;

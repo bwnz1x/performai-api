@@ -62,7 +62,8 @@ export async function followRedirects(
     }
 
     if (checkAuthRedirect && location.includes('/common_auth/login')) {
-      console.error(`[AUTH_REDIRECT] ${currentUrl} -> ${location}`);
+      const originNote = startUrl !== currentUrl ? ` (from ${startUrl})` : '';
+      console.error(`[AUTH_REDIRECT] ${currentUrl}${originNote} -> ${location}`);
       throw new AuthError('session expired or invalid');
     }
 
