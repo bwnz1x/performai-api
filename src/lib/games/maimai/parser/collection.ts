@@ -67,6 +67,14 @@ function isSettingHeaderText(text: string): boolean {
   );
 }
 
+function isEquipFormAction(action: string): boolean {
+  const lower = action.toLowerCase();
+  if (lower.includes('favorite') || lower.includes('search')) {
+    return false;
+  }
+  return lower.includes('/set') || lower.includes('/change');
+}
+
 function extractCollectionImage(
   $container: ReturnType<ReturnType<typeof load>>,
   category: MaimaiCollectionCategory,
@@ -149,9 +157,8 @@ function extractFormItemId(
   form: ReturnType<ReturnType<typeof load>>,
   category: MaimaiCollectionCategory
 ): { fieldName: string; value: string } | null {
-  const action = (form.attr('action') ?? '').toLowerCase();
-  // Skip genre filter / search / logout forms
-  if (form.find('select[name="genre"]').length > 0 || action.includes('search')) {
+  const action = form.attr('action') ?? '';
+  if (!isEquipFormAction(action)) {
     return null;
   }
 
@@ -162,20 +169,31 @@ function extractFormItemId(
     if (val) return { fieldName: name, value: val };
   }
 
-  // Fallback: any hidden input or submit button with a non-token name inside a change/set form
-  if (action.includes('change') || action.includes('set') || action.includes('collection')) {
-    const fields = form.find('input[type="hidden"][name], button[name]');
-    for (let i = 0; i < fields.length; i++) {
-      const el = fields.eq(i);
-      const name = el.attr('name')?.trim() ?? '';
-      const val = el.attr('value')?.trim() ?? '';
-      if (!name || !val) continue;
-      if (name === 'token' || name === 'genre' || name === '_token') continue;
-      return { fieldName: name, value: val };
+  const fields = form.find('input[type="hidden"][name], button[name]');
+  for (let i = 0; i < fields.length; i++) {
+    const el = fields.eq(i);
+    const name = el.attr('name')?.trim() ?? '';
+    const val = el.attr('value')?.trim() ?? '';
+    if (!name || !val) continue;
+    if (name === 'token' || name === 'genre' || name === 'selectGenre' || name === '_token') {
+      continue;
     }
+    return { fieldName: name, value: val };
   }
 
   return null;
+}
+
+function countEquipFormsInside(
+  $: ReturnType<typeof load>,
+  el: ReturnType<ReturnType<typeof load>>
+): number {
+  let count = 0;
+  el.find('form').each((_, f) => {
+    const action = $(f).attr('action') ?? '';
+    if (isEquipFormAction(action)) count++;
+  });
+  return count;
 }
 
 function parseEquippedBlock(
@@ -183,7 +201,15 @@ function parseEquippedBlock(
   category: MaimaiCollectionCategory,
   server: MaimaiServer
 ): MaimaiCollectionItem | null {
-  const townBlock = $('.town_block').first();
+  // The active equipped item is the first .town_block that does not contain a /set/ form
+  let townBlock = $('.town_block').first();
+  $('.town_block').each((_, el) => {
+    const block = $(el);
+    if (countEquipFormsInside($, block) === 0) {
+      townBlock = block;
+      return false;
+    }
+  });
   if (townBlock.length === 0) return null;
 
   const imageUrl = extractCollectionImage(townBlock, category, server);
@@ -222,16 +248,18 @@ function findCardContainerForForm(
 
   if (hasContent(form)) return form;
 
+  let best = form;
   let current = form.parent();
-  for (let depth = 0; depth < 3 && current.length > 0; depth++) {
-    if (current.find('form').length > 1) break;
-    if (hasContent(current) || extractItemName(current, category).length > 0) {
+  for (let depth = 0; depth < 4 && current.length > 0; depth++) {
+    if (countEquipFormsInside($, current) > 1) break;
+    best = current;
+    if (hasContent(current) && extractItemName(current, category).length > 0) {
       return current;
     }
     current = current.parent();
   }
 
-  return form.parent().length > 0 && form.parent().find('form').length === 1 ? form.parent() : form;
+  return best;
 }
 
 function findPrecedingGroupHeader(
@@ -239,7 +267,7 @@ function findPrecedingGroupHeader(
   node: ReturnType<ReturnType<typeof load>>
 ): string | null {
   let cursor = node;
-  for (let depth = 0; depth < 4 && cursor.length > 0; depth++) {
+  for (let depth = 0; depth < 5 && cursor.length > 0; depth++) {
     const prevScrew = cursor.prevAll('.screw_block').first();
     if (prevScrew.length > 0) {
       const text = prevScrew.text().replace(/\s+/g, ' ').trim();
@@ -261,11 +289,9 @@ export function parseCollectionPage(
   const items: MaimaiCollectionItem[] = [];
   const seenKeys = new Set<string>();
 
-  // Anchor directly on every <form> carrying an equippable item ID
+  // Anchor on every equip (<form action=".../set/" or ".../change/">), ignoring favoriteOn/favoriteOff
   $('form').each((_, formEl) => {
     const form = $(formEl);
-    if (form.closest('.town_block').length > 0) return;
-
     const idInfo = extractFormItemId($, form, category);
     if (!idInfo) return;
 
@@ -349,7 +375,7 @@ export function extractEquipForm(
   const rawAction = form.attr('action')?.trim();
   const actionUrl = rawAction
     ? new URL(rawAction, pageUrl).toString()
-    : new URL('change/', pageUrl).toString();
+    : new URL('set/', pageUrl).toString();
 
   const body = new URLSearchParams();
   form.find('input[name]').each((_, inputEl) => {

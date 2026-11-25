@@ -110,6 +110,47 @@ describe('parseCollectionPage', () => {
     expect(extracted.body.get('idx')).toBe('55');
     expect(extracted.body.get('token')).toBe('tok_55');
   });
+
+  it('parses items inside .town_block and ignores favoriteOff forms in favor of /set/ forms', () => {
+    const html = `
+      <div class="town_block m_15 p_15 t_l">
+        <div class="f_14">— SETTING NAMEPLATE —</div>
+        <img class="w_396 m_r_10" src="/maimai-mobile/img/Nameplate/active.png" />
+      </div>
+      <div class="screw_block">Events</div>
+      <div class="town_block m_15 p_10">
+        <div class="f_14">Groove Coaster Plate</div>
+        <img class="w_396" src="/maimai-mobile/img/Nameplate/gc_1.png" />
+        <form action="https://maimaidx-eng.com/maimai-mobile/collection/nameplate/favoriteOff/" method="post">
+          <input type="hidden" name="idx" value="enc_gc_1" />
+          <input type="hidden" name="selectGenre" value="1" />
+          <input type="hidden" name="token" value="tok_fav" />
+        </form>
+        <form action="https://maimaidx-eng.com/maimai-mobile/collection/nameplate/set/" method="post">
+          <input type="hidden" name="idx" value="enc_gc_1" />
+          <input type="hidden" name="selectGenre" value="1" />
+          <input type="hidden" name="token" value="tok_set" />
+        </form>
+      </div>
+    `;
+    const res = parseCollectionPage(html, 'nameplate', 'intl');
+    expect(res.items).toHaveLength(2);
+    expect(res.items[0]?.isEquipped).toBe(true);
+    expect(res.items[1]?.idx).toBe('enc_gc_1');
+    expect(res.items[1]?.name).toBe('Groove Coaster Plate');
+    expect(res.items[1]?.group).toBe('Events');
+
+    const extracted = extractEquipForm(
+      html,
+      'enc_gc_1',
+      'https://maimaidx-eng.com/maimai-mobile/collection/nameplate/',
+      'nameplate'
+    );
+    expect(extracted.actionUrl).toBe(
+      'https://maimaidx-eng.com/maimai-mobile/collection/nameplate/set/'
+    );
+    expect(extracted.body.get('token')).toBe('tok_set');
+  });
 });
 
 describe('extractEquipForm', () => {
