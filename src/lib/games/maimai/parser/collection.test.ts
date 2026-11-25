@@ -56,26 +56,27 @@ const SAMPLE_TROPHY_HTML = `
 `;
 
 describe('parseCollectionPage', () => {
-  it('parses nameplate items, groups, and equipped status', () => {
+  it('parses nameplate items, groups, and equipped status with stable image IDs', () => {
     const res = parseCollectionPage(SAMPLE_NAMEPLATE_HTML, 'nameplate', 'intl');
     expect(res.category).toBe('nameplate');
     expect(res.items).toHaveLength(2);
-    expect(res.items[0]?.idx).toBe('101');
+    expect(res.items[0]?.idx).toBe('img:plate_101.png');
     expect(res.items[0]?.group).toBe('PRiSM PLUS');
     expect(res.items[0]?.isEquipped).toBe(true);
     expect(res.items[0]?.canEquip).toBe(true);
     expect(res.items[0]?.imageUrl).toBe(
       'https://maimaidx-eng.com/maimai-mobile/img/Nameplate/plate_101.png'
     );
-    expect(res.items[1]?.idx).toBe('202');
+    expect(res.items[1]?.idx).toBe('img:plate_202.png');
     expect(res.items[1]?.isEquipped).toBe(false);
-    expect(res.equipped?.idx).toBe('101');
+    expect(res.equipped?.idx).toBe('img:plate_101.png');
   });
 
   it('parses trophy items and rarity types', () => {
     const res = parseCollectionPage(SAMPLE_TROPHY_HTML, 'trophy', 'intl');
     expect(res.items).toHaveLength(2);
     expect(res.items[0]?.trophyType).toBe('rainbow');
+    expect(res.items[0]?.idx).toBe('trophy:rainbow:Legend of PRiSM');
     expect(res.items[0]?.isEquipped).toBe(true);
     expect(res.items[1]?.trophyType).toBe('gold');
     expect(res.items[1]?.name).toBe('SSS Master');
@@ -95,7 +96,7 @@ describe('parseCollectionPage', () => {
     `;
     const res = parseCollectionPage(html, 'icon', 'intl');
     expect(res.items).toHaveLength(1);
-    expect(res.items[0]?.idx).toBe('55');
+    expect(res.items[0]?.idx).toBe('img:icon_55.png');
     expect(res.items[0]?.name).toBe('Event Salt');
     expect(res.items[0]?.group).toBe('Events');
     expect(res.items[0]?.imageUrl).toBe(
@@ -104,15 +105,16 @@ describe('parseCollectionPage', () => {
 
     const extracted = extractEquipForm(
       html,
-      '55',
-      'https://maimaidx-eng.com/maimai-mobile/collection/'
+      'img:icon_55.png',
+      'https://maimaidx-eng.com/maimai-mobile/collection/',
+      'icon'
     );
     expect(extracted.body.get('idx')).toBe('55');
     expect(extracted.body.get('token')).toBe('tok_55');
   });
 
-  it('parses items inside .town_block and ignores favoriteOff forms in favor of /set/ forms', () => {
-    const html = `
+  it('matches rotated encrypted idx via stable image ID on subsequent page loads', () => {
+    const firstLoadHtml = `
       <div class="town_block m_15 p_15 t_l">
         <div class="f_14">— SETTING NAMEPLATE —</div>
         <img class="w_396 m_r_10" src="/maimai-mobile/img/Nameplate/active.png" />
@@ -122,34 +124,40 @@ describe('parseCollectionPage', () => {
         <div class="f_14">Groove Coaster Plate</div>
         <img class="w_396" src="/maimai-mobile/img/Nameplate/gc_1.png" />
         <form action="https://maimaidx-eng.com/maimai-mobile/collection/nameplate/favoriteOff/" method="post">
-          <input type="hidden" name="idx" value="enc_gc_1" />
+          <input type="hidden" name="idx" value="enc_gc_1_old" />
           <input type="hidden" name="selectGenre" value="1" />
           <input type="hidden" name="token" value="tok_fav" />
         </form>
         <form action="https://maimaidx-eng.com/maimai-mobile/collection/nameplate/set/" method="post">
-          <input type="hidden" name="idx" value="enc_gc_1" />
+          <input type="hidden" name="idx" value="enc_gc_1_old" />
           <input type="hidden" name="selectGenre" value="1" />
-          <input type="hidden" name="token" value="tok_set" />
+          <input type="hidden" name="token" value="tok_set_old" />
         </form>
       </div>
     `;
-    const res = parseCollectionPage(html, 'nameplate', 'intl');
+    const res = parseCollectionPage(firstLoadHtml, 'nameplate', 'intl');
     expect(res.items).toHaveLength(2);
     expect(res.items[0]?.isEquipped).toBe(true);
-    expect(res.items[1]?.idx).toBe('enc_gc_1');
+    expect(res.items[1]?.idx).toBe('img:gc_1.png');
     expect(res.items[1]?.name).toBe('Groove Coaster Plate');
     expect(res.items[1]?.group).toBe('Events');
 
+    // Simulate SEGA rotating encrypted idx & CSRF token on the next GET
+    const secondLoadHtml = firstLoadHtml
+      .replaceAll('enc_gc_1_old', 'enc_gc_1_ROTATED_NEW')
+      .replaceAll('tok_set_old', 'tok_set_NEW');
+
     const extracted = extractEquipForm(
-      html,
-      'enc_gc_1',
+      secondLoadHtml,
+      res.items[1]!.idx,
       'https://maimaidx-eng.com/maimai-mobile/collection/nameplate/',
       'nameplate'
     );
     expect(extracted.actionUrl).toBe(
       'https://maimaidx-eng.com/maimai-mobile/collection/nameplate/set/'
     );
-    expect(extracted.body.get('token')).toBe('tok_set');
+    expect(extracted.body.get('idx')).toBe('enc_gc_1_ROTATED_NEW');
+    expect(extracted.body.get('token')).toBe('tok_set_NEW');
   });
 });
 

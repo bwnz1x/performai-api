@@ -367,7 +367,7 @@ export async function equipMaimaiCollection(
   }
 
   const pageHtml = await getRes.text();
-  const { actionUrl, body } = extractEquipForm(pageHtml, idx, pageUrl, category);
+  const { actionUrl, body } = extractEquipForm(pageHtml, idx, pageUrl, category, server);
 
   const postRes = await maimaiFetch(actionUrl, sessionCookie, {
     method: 'POST',

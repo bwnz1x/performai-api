@@ -278,6 +278,26 @@ function findPrecedingGroupHeader(
   return null;
 }
 
+function computeStableItemId(
+  category: MaimaiCollectionCategory,
+  imageUrl: string | null,
+  name: string,
+  trophyType: MaimaiCollectionItem['trophyType'],
+  rawFormIdx: string
+): string {
+  if (category !== 'trophy' && imageUrl) {
+    const clean = imageUrl.split('?')[0] ?? imageUrl;
+    const fileName = clean.split('/').pop()?.trim();
+    if (fileName) {
+      return `img:${fileName}`;
+    }
+  }
+  if (category === 'trophy' && name.trim().length > 0) {
+    return `trophy:${trophyType ?? 'normal'}:${name.trim()}`;
+  }
+  return rawFormIdx;
+}
+
 export function parseCollectionPage(
   html: string,
   category: MaimaiCollectionCategory,
@@ -295,18 +315,19 @@ export function parseCollectionPage(
     const idInfo = extractFormItemId($, form, category);
     if (!idInfo) return;
 
-    const idx = idInfo.value;
-    const dedupeKey = `idx:${idx}`;
-    if (seenKeys.has(dedupeKey)) return;
-    seenKeys.add(dedupeKey);
-
+    const rawFormIdx = idInfo.value;
     const card = findCardContainerForForm($, form, category, server);
     const imageUrl = extractCollectionImage(card, category, server);
     const trophyEl = card.find('.trophy_block').first();
     const trophyType = category === 'trophy' ? parseTrophyType(trophyEl.attr('class')) : null;
-    const name = extractItemName(card, category) || `${category} #${idx}`;
+    const name = extractItemName(card, category) || `${category} #${items.length + 1}`;
     const description = extractDescription(card);
     const group = findPrecedingGroupHeader($, card);
+
+    const stableId = computeStableItemId(category, imageUrl, name, trophyType, rawFormIdx);
+    const dedupeKey = `id:${stableId}`;
+    if (seenKeys.has(dedupeKey)) return;
+    seenKeys.add(dedupeKey);
 
     const isEquipped =
       card.hasClass('collection_setting_block_equipped') ||
@@ -315,7 +336,7 @@ export function parseCollectionPage(
           (category === 'trophy' && name.length > 0 && equipped.name === name)));
 
     items.push({
-      idx,
+      idx: stableId,
       category,
       name,
       description: description === name ? null : description,
@@ -329,7 +350,14 @@ export function parseCollectionPage(
 
   // Always include the equipped header item if it wasn't matched in the equippable list
   if (equipped && !items.some((i) => i.isEquipped)) {
-    items.unshift(equipped);
+    const equippedStableId = computeStableItemId(
+      category,
+      equipped.imageUrl,
+      equipped.name,
+      equipped.trophyType,
+      equipped.idx
+    );
+    items.unshift({ ...equipped, idx: equippedStableId });
   }
 
   const matchedEquipped = items.find((i) => i.isEquipped) ?? equipped;
@@ -350,19 +378,38 @@ export function extractEquipForm(
   html: string,
   idx: string,
   pageUrl: string,
-  category: MaimaiCollectionCategory = 'icon'
+  category: MaimaiCollectionCategory = 'icon',
+  server: MaimaiServer = 'intl'
 ): ExtractedEquipForm {
   const $ = load(html);
   let targetForm: ReturnType<typeof $> | null = null;
   let matchedFieldName = 'idx';
+  let matchedRawValue = idx;
 
   $('form').each((_, formEl) => {
     if (targetForm) return;
     const form = $(formEl);
     const idInfo = extractFormItemId($, form, category);
-    if (idInfo && idInfo.value === idx) {
+    if (!idInfo) return;
+
+    if (idInfo.value === idx) {
       targetForm = form;
       matchedFieldName = idInfo.fieldName;
+      matchedRawValue = idInfo.value;
+      return;
+    }
+
+    const card = findCardContainerForForm($, form, category, server);
+    const imageUrl = extractCollectionImage(card, category, server);
+    const trophyEl = card.find('.trophy_block').first();
+    const trophyType = category === 'trophy' ? parseTrophyType(trophyEl.attr('class')) : null;
+    const name = extractItemName(card, category);
+    const stableId = computeStableItemId(category, imageUrl, name, trophyType, idInfo.value);
+
+    if (stableId === idx) {
+      targetForm = form;
+      matchedFieldName = idInfo.fieldName;
+      matchedRawValue = idInfo.value;
     }
   });
 
@@ -388,7 +435,7 @@ export function extractEquipForm(
   });
 
   if (!body.has(matchedFieldName)) {
-    body.set(matchedFieldName, idx);
+    body.set(matchedFieldName, matchedRawValue);
   }
 
   return { actionUrl, body };
