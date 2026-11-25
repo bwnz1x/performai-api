@@ -326,7 +326,16 @@ export async function getMaimaiCollection(
   }
 
   const html = await res.text();
-  return parseCollectionPage(html, category, server);
+  const parsed = parseCollectionPage(html, category, server);
+  if (parsed.items.length === 0) {
+    const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+    const formMatches = html.match(/<form\b[^>]*>/gi) ?? [];
+    const idxMatches = html.match(/name=["']idx["']/gi) ?? [];
+    console.warn(
+      `[COLLECTION_EMPTY] category=${category} url=${pageUrl} len=${html.length} title=${JSON.stringify(titleMatch?.[1]?.trim() ?? '')} forms=${formMatches.length} idxInputs=${idxMatches.length} sampleForms=${JSON.stringify(formMatches.slice(0, 3))}`
+    );
+  }
+  return parsed;
 }
 
 export async function equipMaimaiCollection(

@@ -41,6 +41,19 @@ function parseTrophyType(className: string | undefined): MaimaiCollectionItem['t
   return null;
 }
 
+function isUiChromeImage(src: string): boolean {
+  const lower = src.toLowerCase();
+  return (
+    lower.includes('btn_') ||
+    lower.includes('line_') ||
+    lower.includes('icon_star') ||
+    lower.includes('favorite') ||
+    lower.includes('tab_') ||
+    lower.includes('title_') ||
+    lower.includes('arrow')
+  );
+}
+
 function extractCollectionImage(
   $container: ReturnType<ReturnType<typeof load>>,
   category: MaimaiCollectionCategory,
@@ -59,16 +72,7 @@ function extractCollectionImage(
     const imgs = $container.find(selector);
     for (let i = 0; i < imgs.length; i++) {
       const src = imgs.eq(i).attr('src');
-      if (!src) continue;
-      // Skip UI button images
-      if (
-        src.includes('btn_') ||
-        src.includes('line_') ||
-        src.includes('icon_star') ||
-        src.includes('favorite')
-      ) {
-        continue;
-      }
+      if (!src || isUiChromeImage(src)) continue;
       const resolved = resolveUrl(src, server);
       if (resolved) return resolved;
     }
@@ -92,15 +96,18 @@ function extractItemName(
 
   const candidates = [
     '.collection_name_block',
+    '.f_15.break',
+    '.f_15',
     '.f_14.break',
     '.f_14',
     '.f_13.break',
     '.f_13',
     '.p_5.f_14',
+    '.f_b',
   ];
   for (const selector of candidates) {
     const text = $container.find(selector).first().text().replace(/\s+/g, ' ').trim();
-    if (text) return text;
+    if (text && text.length <= 120) return text;
   }
   return '';
 }
@@ -109,7 +116,7 @@ function extractDescription($container: ReturnType<ReturnType<typeof load>>): st
   const candidates = ['.collection_info_block', '.f_12.break', '.f_12', '.f_11'];
   for (const selector of candidates) {
     const text = $container.find(selector).first().text().replace(/\s+/g, ' ').trim();
-    if (text) return text;
+    if (text && text.length <= 240) return text;
   }
   return null;
 }
@@ -134,13 +141,60 @@ function parseEquippedBlock(
     idx: 'equipped',
     category,
     name,
-    description,
+    description: description === name ? null : description,
     imageUrl,
     trophyType,
     group: null,
     isEquipped: true,
     canEquip: false,
   };
+}
+
+function findCardContainerForForm(
+  $: ReturnType<typeof load>,
+  form: ReturnType<ReturnType<typeof load>>,
+  category: MaimaiCollectionCategory,
+  server: MaimaiServer
+): ReturnType<ReturnType<typeof load>> {
+  const hasContent = (el: ReturnType<ReturnType<typeof load>>) => {
+    if (category === 'trophy') {
+      return el.find('.trophy_block, .trophy_inner_block').length > 0;
+    }
+    return extractCollectionImage(el, category, server) !== null;
+  };
+
+  if (hasContent(form)) return form;
+
+  let current = form.parent();
+  for (let depth = 0; depth < 3 && current.length > 0; depth++) {
+    const formsInside = current.find('input[name="idx"], button[name="idx"]').length;
+    if (formsInside > 1) break;
+    if (hasContent(current) || extractItemName(current, category).length > 0) {
+      return current;
+    }
+    current = current.parent();
+  }
+
+  return form.parent().length > 0 &&
+    form.parent().find('input[name="idx"], button[name="idx"]').length === 1
+    ? form.parent()
+    : form;
+}
+
+function findPrecedingGroupHeader(
+  $: ReturnType<typeof load>,
+  node: ReturnType<ReturnType<typeof load>>
+): string | null {
+  let cursor = node;
+  for (let depth = 0; depth < 4 && cursor.length > 0; depth++) {
+    const prevScrew = cursor.prevAll('.screw_block').first();
+    if (prevScrew.length > 0) {
+      const text = prevScrew.text().replace(/\s+/g, ' ').trim();
+      if (text) return text;
+    }
+    cursor = cursor.parent();
+  }
+  return null;
 }
 
 export function parseCollectionPage(
@@ -153,63 +207,96 @@ export function parseCollectionPage(
 
   const items: MaimaiCollectionItem[] = [];
   const seenKeys = new Set<string>();
-  let currentGroup: string | null = null;
 
-  const equippableContainers = $(
-    '.screw_block, .see_through_block, .collection_setting_block, .w_450.m_15'
-  );
+  // Strategy 1 (Primary): Anchor directly on every <form> containing an `idx` input or button.
+  // This works regardless of SEGA's outer wrapper class names across Icon / Plate / Frame / Title / Partner.
+  $('form').each((_, formEl) => {
+    const form = $(formEl);
+    if (form.closest('.town_block').length > 0) return;
 
-  equippableContainers.each((_, element) => {
-    const el = $(element);
-    if (el.hasClass('screw_block')) {
-      const header = el.text().replace(/\s+/g, ' ').trim();
-      if (header) currentGroup = header;
-      return;
-    }
+    const idxField = form.find('input[name="idx"], button[name="idx"]').first();
+    const idx = idxField.attr('value')?.trim() ?? '';
+    if (!idx) return;
 
-    // Skip the top active equipped summary block if it matched a generic selector
-    if (el.hasClass('town_block') || el.closest('.town_block').length > 0) {
-      return;
-    }
-
-    const form = el.find('form').first();
-    const idx = form.find('input[name="idx"]').attr('value')?.trim() ?? '';
-    const imageUrl = extractCollectionImage(el, category, server);
-    const trophyEl = el.find('.trophy_block').first();
-    const trophyType = category === 'trophy' ? parseTrophyType(trophyEl.attr('class')) : null;
-    const name = extractItemName(el, category);
-
-    if (!idx && !imageUrl && !name) return;
-
-    const dedupeKey = idx ? `idx:${idx}` : `${name}|${imageUrl ?? ''}`;
+    const dedupeKey = `idx:${idx}`;
     if (seenKeys.has(dedupeKey)) return;
     seenKeys.add(dedupeKey);
 
-    const hasEquippedBadge =
-      el.hasClass('collection_setting_block_equipped') ||
-      el.find('img[src*="btn_set."], img[src*="equipped"], .equipped').length > 0 ||
+    const card = findCardContainerForForm($, form, category, server);
+    const imageUrl = extractCollectionImage(card, category, server);
+    const trophyEl = card.find('.trophy_block').first();
+    const trophyType = category === 'trophy' ? parseTrophyType(trophyEl.attr('class')) : null;
+    const name = extractItemName(card, category) || `${category} #${idx}`;
+    const description = extractDescription(card);
+    const group = findPrecedingGroupHeader($, card);
+
+    const isEquipped =
+      card.hasClass('collection_setting_block_equipped') ||
+      card.find('img[src*="btn_set."], img[src*="equipped"], .equipped').length > 0 ||
       (equipped !== null &&
         ((imageUrl !== null && equipped.imageUrl === imageUrl) ||
           (category === 'trophy' && name.length > 0 && equipped.name === name)));
 
-    const canEquip = idx.length > 0 && form.length > 0;
-    const finalName = name || (idx ? `${category} #${idx}` : 'Unknown');
-    const description = extractDescription(el);
-
     items.push({
-      idx: idx || `item_${items.length}`,
+      idx,
       category,
-      name: finalName,
-      description: description === finalName ? null : description,
+      name,
+      description: description === name ? null : description,
       imageUrl,
       trophyType,
-      group: currentGroup,
-      isEquipped: hasEquippedBadge,
-      canEquip,
+      group,
+      isEquipped,
+      canEquip: true,
     });
   });
 
-  // If the equipped item wasn't matched with an idx in the list, sync its idx if possible
+  // Strategy 2 (Fallback): If no forms with `idx` were found, scan common collection blocks.
+  if (items.length === 0) {
+    let currentGroup: string | null = null;
+    $('.screw_block, .see_through_block, .collection_setting_block, .w_450').each((_, element) => {
+      const el = $(element);
+      if (el.hasClass('screw_block')) {
+        const header = el.text().replace(/\s+/g, ' ').trim();
+        if (header) currentGroup = header;
+        return;
+      }
+      if (el.hasClass('town_block') || el.closest('.town_block').length > 0) return;
+
+      const imageUrl = extractCollectionImage(el, category, server);
+      const trophyEl = el.find('.trophy_block').first();
+      const trophyType = category === 'trophy' ? parseTrophyType(trophyEl.attr('class')) : null;
+      const name = extractItemName(el, category);
+      if (!imageUrl && !name) return;
+
+      const dedupeKey = `${name}|${imageUrl ?? ''}`;
+      if (seenKeys.has(dedupeKey)) return;
+      seenKeys.add(dedupeKey);
+
+      const isEquipped =
+        equipped !== null &&
+        ((imageUrl !== null && equipped.imageUrl === imageUrl) ||
+          (category === 'trophy' && name.length > 0 && equipped.name === name));
+      const description = extractDescription(el);
+
+      items.push({
+        idx: `item_${items.length}`,
+        category,
+        name: name || `${category} #${items.length + 1}`,
+        description: description === name ? null : description,
+        imageUrl,
+        trophyType,
+        group: currentGroup,
+        isEquipped,
+        canEquip: false,
+      });
+    });
+  }
+
+  // Ensure the active equipped item is always visible in the list even if SEGA omits a form for it
+  if (equipped && !items.some((i) => i.isEquipped)) {
+    items.unshift(equipped);
+  }
+
   const matchedEquipped = items.find((i) => i.isEquipped) ?? equipped;
 
   return {
@@ -231,7 +318,7 @@ export function extractEquipForm(html: string, idx: string, pageUrl: string): Ex
   $('form').each((_, formEl) => {
     if (targetForm) return;
     const form = $(formEl);
-    const idxInput = form.find('input[name="idx"]').first();
+    const idxInput = form.find('input[name="idx"], button[name="idx"]').first();
     if (idxInput.attr('value')?.trim() === idx) {
       targetForm = form;
     }

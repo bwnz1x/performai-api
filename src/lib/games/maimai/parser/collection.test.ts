@@ -80,6 +80,36 @@ describe('parseCollectionPage', () => {
     expect(res.items[1]?.trophyType).toBe('gold');
     expect(res.items[1]?.name).toBe('SSS Master');
   });
+
+  it('parses arbitrary wrapper divs and button[name="idx"] forms', () => {
+    const html = `
+      <div class="screw_block">Events</div>
+      <div class="custom_item_row p_10">
+        <img class="w_80" src="/maimai-mobile/img/Icon/icon_55.png" />
+        <div class="f_14">Event Salt</div>
+        <form action="/maimai-mobile/collection/change/" method="post">
+          <input type="hidden" name="token" value="tok_55" />
+          <button type="submit" name="idx" value="55">Set</button>
+        </form>
+      </div>
+    `;
+    const res = parseCollectionPage(html, 'icon', 'intl');
+    expect(res.items).toHaveLength(1);
+    expect(res.items[0]?.idx).toBe('55');
+    expect(res.items[0]?.name).toBe('Event Salt');
+    expect(res.items[0]?.group).toBe('Events');
+    expect(res.items[0]?.imageUrl).toBe(
+      'https://maimaidx-eng.com/maimai-mobile/img/Icon/icon_55.png'
+    );
+
+    const extracted = extractEquipForm(
+      html,
+      '55',
+      'https://maimaidx-eng.com/maimai-mobile/collection/'
+    );
+    expect(extracted.body.get('idx')).toBe('55');
+    expect(extracted.body.get('token')).toBe('tok_55');
+  });
 });
 
 describe('extractEquipForm', () => {
