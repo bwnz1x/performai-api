@@ -327,12 +327,21 @@ export async function getMaimaiCollection(
 
   const html = await res.text();
   const parsed = parseCollectionPage(html, category, server);
-  if (parsed.items.length === 0) {
-    const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
-    const formMatches = html.match(/<form\b[^>]*>/gi) ?? [];
-    const idxMatches = html.match(/name=["']idx["']/gi) ?? [];
+  const equippableCount = parsed.items.filter((i) => i.canEquip).length;
+  if (equippableCount === 0) {
+    const formTags = html.match(/<form\b[^>]*>/gi) ?? [];
+    const inputNames = Array.from(
+      new Set(
+        Array.from(html.matchAll(/<(?:input|button|select)\b[^>]*\bname=["']([^"']+)["']/gi)).map(
+          (m) => m[1]
+        )
+      )
+    );
+    const firstFormSnippet = (html.match(/<form\b[\s\S]*?<\/form>/i)?.[0] ?? '')
+      .replace(/\s+/g, ' ')
+      .slice(0, 400);
     console.warn(
-      `[COLLECTION_EMPTY] category=${category} url=${pageUrl} len=${html.length} title=${JSON.stringify(titleMatch?.[1]?.trim() ?? '')} forms=${formMatches.length} idxInputs=${idxMatches.length} sampleForms=${JSON.stringify(formMatches.slice(0, 3))}`
+      `[COLLECTION_NO_EQUIPPABLE] category=${category} url=${pageUrl} len=${html.length} forms=${formTags.length} inputNames=${JSON.stringify(inputNames)} sampleForm=${JSON.stringify(firstFormSnippet)}`
     );
   }
   return parsed;
@@ -358,7 +367,7 @@ export async function equipMaimaiCollection(
   }
 
   const pageHtml = await getRes.text();
-  const { actionUrl, body } = extractEquipForm(pageHtml, idx, pageUrl);
+  const { actionUrl, body } = extractEquipForm(pageHtml, idx, pageUrl, category);
 
   const postRes = await maimaiFetch(actionUrl, sessionCookie, {
     method: 'POST',

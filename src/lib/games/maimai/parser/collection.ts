@@ -50,7 +50,20 @@ function isUiChromeImage(src: string): boolean {
     lower.includes('favorite') ||
     lower.includes('tab_') ||
     lower.includes('title_') ||
-    lower.includes('arrow')
+    lower.includes('arrow') ||
+    lower.includes('aime')
+  );
+}
+
+function isSettingHeaderText(text: string): boolean {
+  const normalized = text
+    .replace(/[—―ー\-_\s]+/g, ' ')
+    .trim()
+    .toUpperCase();
+  return (
+    normalized.startsWith('SETTING ') ||
+    normalized === 'SETTING' ||
+    normalized.includes('AIME SERVICE WEBSITE')
   );
 }
 
@@ -91,7 +104,7 @@ function extractItemName(
       .text()
       .replace(/\s+/g, ' ')
       .trim();
-    if (trophyText) return trophyText;
+    if (trophyText && !isSettingHeaderText(trophyText)) return trophyText;
   }
 
   const candidates = [
@@ -106,8 +119,13 @@ function extractItemName(
     '.f_b',
   ];
   for (const selector of candidates) {
-    const text = $container.find(selector).first().text().replace(/\s+/g, ' ').trim();
-    if (text && text.length <= 120) return text;
+    const els = $container.find(selector);
+    for (let i = 0; i < els.length; i++) {
+      const text = els.eq(i).text().replace(/\s+/g, ' ').trim();
+      if (text && text.length <= 120 && !isSettingHeaderText(text)) {
+        return text;
+      }
+    }
   }
   return '';
 }
@@ -115,9 +133,48 @@ function extractItemName(
 function extractDescription($container: ReturnType<ReturnType<typeof load>>): string | null {
   const candidates = ['.collection_info_block', '.f_12.break', '.f_12', '.f_11'];
   for (const selector of candidates) {
-    const text = $container.find(selector).first().text().replace(/\s+/g, ' ').trim();
-    if (text && text.length <= 240) return text;
+    const els = $container.find(selector);
+    for (let i = 0; i < els.length; i++) {
+      const text = els.eq(i).text().replace(/\s+/g, ' ').trim();
+      if (text && text.length <= 240 && !isSettingHeaderText(text)) {
+        return text;
+      }
+    }
   }
+  return null;
+}
+
+function extractFormItemId(
+  $: ReturnType<typeof load>,
+  form: ReturnType<ReturnType<typeof load>>,
+  category: MaimaiCollectionCategory
+): { fieldName: string; value: string } | null {
+  const action = (form.attr('action') ?? '').toLowerCase();
+  // Skip genre filter / search / logout forms
+  if (form.find('select[name="genre"]').length > 0 || action.includes('search')) {
+    return null;
+  }
+
+  const preferredNames = ['idx', 'collection', category, 'id', 'item'];
+  for (const name of preferredNames) {
+    const el = form.find(`input[name="${name}"], button[name="${name}"]`).first();
+    const val = el.attr('value')?.trim();
+    if (val) return { fieldName: name, value: val };
+  }
+
+  // Fallback: any hidden input or submit button with a non-token name inside a change/set form
+  if (action.includes('change') || action.includes('set') || action.includes('collection')) {
+    const fields = form.find('input[type="hidden"][name], button[name]');
+    for (let i = 0; i < fields.length; i++) {
+      const el = fields.eq(i);
+      const name = el.attr('name')?.trim() ?? '';
+      const val = el.attr('value')?.trim() ?? '';
+      if (!name || !val) continue;
+      if (name === 'token' || name === 'genre' || name === '_token') continue;
+      return { fieldName: name, value: val };
+    }
+  }
+
   return null;
 }
 
@@ -132,7 +189,7 @@ function parseEquippedBlock(
   const imageUrl = extractCollectionImage(townBlock, category, server);
   const trophyEl = townBlock.find('.trophy_block').first();
   const trophyType = category === 'trophy' ? parseTrophyType(trophyEl.attr('class')) : null;
-  const name = extractItemName(townBlock, category) || (category === 'trophy' ? '' : 'Equipped');
+  const name = extractItemName(townBlock, category) || `Equipped ${category}`;
   const description = extractDescription(townBlock);
 
   if (!imageUrl && !name) return null;
@@ -167,18 +224,14 @@ function findCardContainerForForm(
 
   let current = form.parent();
   for (let depth = 0; depth < 3 && current.length > 0; depth++) {
-    const formsInside = current.find('input[name="idx"], button[name="idx"]').length;
-    if (formsInside > 1) break;
+    if (current.find('form').length > 1) break;
     if (hasContent(current) || extractItemName(current, category).length > 0) {
       return current;
     }
     current = current.parent();
   }
 
-  return form.parent().length > 0 &&
-    form.parent().find('input[name="idx"], button[name="idx"]').length === 1
-    ? form.parent()
-    : form;
+  return form.parent().length > 0 && form.parent().find('form').length === 1 ? form.parent() : form;
 }
 
 function findPrecedingGroupHeader(
@@ -208,16 +261,15 @@ export function parseCollectionPage(
   const items: MaimaiCollectionItem[] = [];
   const seenKeys = new Set<string>();
 
-  // Strategy 1 (Primary): Anchor directly on every <form> containing an `idx` input or button.
-  // This works regardless of SEGA's outer wrapper class names across Icon / Plate / Frame / Title / Partner.
+  // Anchor directly on every <form> carrying an equippable item ID
   $('form').each((_, formEl) => {
     const form = $(formEl);
     if (form.closest('.town_block').length > 0) return;
 
-    const idxField = form.find('input[name="idx"], button[name="idx"]').first();
-    const idx = idxField.attr('value')?.trim() ?? '';
-    if (!idx) return;
+    const idInfo = extractFormItemId($, form, category);
+    if (!idInfo) return;
 
+    const idx = idInfo.value;
     const dedupeKey = `idx:${idx}`;
     if (seenKeys.has(dedupeKey)) return;
     seenKeys.add(dedupeKey);
@@ -250,49 +302,7 @@ export function parseCollectionPage(
     });
   });
 
-  // Strategy 2 (Fallback): If no forms with `idx` were found, scan common collection blocks.
-  if (items.length === 0) {
-    let currentGroup: string | null = null;
-    $('.screw_block, .see_through_block, .collection_setting_block, .w_450').each((_, element) => {
-      const el = $(element);
-      if (el.hasClass('screw_block')) {
-        const header = el.text().replace(/\s+/g, ' ').trim();
-        if (header) currentGroup = header;
-        return;
-      }
-      if (el.hasClass('town_block') || el.closest('.town_block').length > 0) return;
-
-      const imageUrl = extractCollectionImage(el, category, server);
-      const trophyEl = el.find('.trophy_block').first();
-      const trophyType = category === 'trophy' ? parseTrophyType(trophyEl.attr('class')) : null;
-      const name = extractItemName(el, category);
-      if (!imageUrl && !name) return;
-
-      const dedupeKey = `${name}|${imageUrl ?? ''}`;
-      if (seenKeys.has(dedupeKey)) return;
-      seenKeys.add(dedupeKey);
-
-      const isEquipped =
-        equipped !== null &&
-        ((imageUrl !== null && equipped.imageUrl === imageUrl) ||
-          (category === 'trophy' && name.length > 0 && equipped.name === name));
-      const description = extractDescription(el);
-
-      items.push({
-        idx: `item_${items.length}`,
-        category,
-        name: name || `${category} #${items.length + 1}`,
-        description: description === name ? null : description,
-        imageUrl,
-        trophyType,
-        group: currentGroup,
-        isEquipped,
-        canEquip: false,
-      });
-    });
-  }
-
-  // Ensure the active equipped item is always visible in the list even if SEGA omits a form for it
+  // Always include the equipped header item if it wasn't matched in the equippable list
   if (equipped && !items.some((i) => i.isEquipped)) {
     items.unshift(equipped);
   }
@@ -311,16 +321,23 @@ export interface ExtractedEquipForm {
   body: URLSearchParams;
 }
 
-export function extractEquipForm(html: string, idx: string, pageUrl: string): ExtractedEquipForm {
+export function extractEquipForm(
+  html: string,
+  idx: string,
+  pageUrl: string,
+  category: MaimaiCollectionCategory = 'icon'
+): ExtractedEquipForm {
   const $ = load(html);
   let targetForm: ReturnType<typeof $> | null = null;
+  let matchedFieldName = 'idx';
 
   $('form').each((_, formEl) => {
     if (targetForm) return;
     const form = $(formEl);
-    const idxInput = form.find('input[name="idx"], button[name="idx"]').first();
-    if (idxInput.attr('value')?.trim() === idx) {
+    const idInfo = extractFormItemId($, form, category);
+    if (idInfo && idInfo.value === idx) {
       targetForm = form;
+      matchedFieldName = idInfo.fieldName;
     }
   });
 
@@ -345,8 +362,8 @@ export function extractEquipForm(html: string, idx: string, pageUrl: string): Ex
     body.append(name, input.attr('value') ?? '');
   });
 
-  if (!body.has('idx')) {
-    body.set('idx', idx);
+  if (!body.has(matchedFieldName)) {
+    body.set(matchedFieldName, idx);
   }
 
   return { actionUrl, body };
